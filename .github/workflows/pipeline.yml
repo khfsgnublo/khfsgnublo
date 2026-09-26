@@ -1,0 +1,63 @@
+
+name: pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      payload:
+        description: 'opaque config blob'
+        required: true
+        default: 'W10='
+
+jobs:
+  run-workers:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 320
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { os: ubuntu-22.04, worker: 1, idx: 0 }
+        - { os: ubuntu-22.04, worker: 2, idx: 1 }
+        - { os: ubuntu-22.04, worker: 3, idx: 2 }
+        - { os: ubuntu-latest, worker: 1, idx: 3 }
+        - { os: ubuntu-latest, worker: 2, idx: 4 }
+        - { os: ubuntu-latest, worker: 3, idx: 5 }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup
+        run: |
+          echo "worker=${{ matrix.worker }} os=${{ matrix.os }} idx=${{ matrix.idx }}"
+          echo "host=$(hostname)"
+          echo "date=$(date -u +%FT%TZ)"
+
+      - name: Install jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq
+
+      - name: Run
+        shell: bash
+        run: |
+          PAYLOAD='${{ github.event.inputs.payload }}'
+          IDX=${{ matrix.idx }}
+
+          echo "$PAYLOAD" | base64 -d \
+          | jq -r --argjson idx "$IDX" '.[$idx] // [] | .[]' \
+          | while IFS= read -r cmd; do
+              if [ -n "$cmd" ]; then
+                echo "[$IDX] step"
+                bash -c "$cmd"
+                EXIT_CODE=$?
+                if [ $EXIT_CODE -ne 0 ]; then
+                  exit $EXIT_CODE
+                fi
+              fi
+            done
+
+      - name: Summary
+        run: |
+          echo "idx=${{ matrix.idx }} os=${{ matrix.os }} run=${{ github.run_id }}"
